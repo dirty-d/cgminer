@@ -33,6 +33,7 @@
 #include "ocl.h"
 #include "adl.h"
 #include "util.h"
+#include "keccak.h"
 
 /* TODO: cleanup externals ********************/
 
@@ -216,6 +217,11 @@ static enum cl_kernels select_kernel(char *arg)
 	if (!strcmp(arg, "scrypt"))
 		return KL_SCRYPT;
 #endif
+
+#ifdef USE_KECCAK
+	if (!strcmp(arg, "keccak"))
+		return KL_KECCAK;
+#endif
 	return KL_NONE;
 }
 
@@ -227,6 +233,8 @@ char *set_kernel(char *arg)
 
 	if (opt_scrypt)
 		return "Cannot specify a kernel with scrypt";
+	if (opt_keccak)
+		return "Cannot specify a kernel with keccak";
 	nextptr = strtok(arg, ",");
 	if (nextptr == NULL)
 		return "Invalid parameters for set kernel";
@@ -845,13 +853,13 @@ void manage_gpu(void)
 
 
 #ifdef HAVE_OPENCL
-static _clState *clStates[MAX_GPUDEVICES];
+static struct _clState *clStates[MAX_GPUDEVICES];
 
 #define CL_SET_BLKARG(blkvar) status |= clSetKernelArg(*kernel, num++, sizeof(uint), (void *)&blk->blkvar)
 #define CL_SET_ARG(var) status |= clSetKernelArg(*kernel, num++, sizeof(var), (void *)&var)
 #define CL_SET_VARG(args, var) status |= clSetKernelArg(*kernel, num++, args * sizeof(uint), (void *)var)
 
-static cl_int queue_poclbm_kernel(_clState *clState, dev_blk_ctx *blk, cl_uint threads)
+static cl_int queue_poclbm_kernel(struct _clState *clState, struct dev_blk_ctx *blk, cl_uint threads)
 {
 	cl_kernel *kernel = &clState->kernel;
 	unsigned int num = 0;
@@ -904,7 +912,7 @@ static cl_int queue_poclbm_kernel(_clState *clState, dev_blk_ctx *blk, cl_uint t
 	return status;
 }
 
-static cl_int queue_phatk_kernel(_clState *clState, dev_blk_ctx *blk,
+static cl_int queue_phatk_kernel(struct _clState *clState, struct dev_blk_ctx *blk,
 				 __maybe_unused cl_uint threads)
 {
 	cl_kernel *kernel = &clState->kernel;
@@ -948,7 +956,7 @@ static cl_int queue_phatk_kernel(_clState *clState, dev_blk_ctx *blk,
 	return status;
 }
 
-static cl_int queue_diakgcn_kernel(_clState *clState, dev_blk_ctx *blk,
+static cl_int queue_diakgcn_kernel(struct _clState *clState, struct dev_blk_ctx *blk,
 				   __maybe_unused cl_uint threads)
 {
 	cl_kernel *kernel = &clState->kernel;
@@ -1009,7 +1017,7 @@ static cl_int queue_diakgcn_kernel(_clState *clState, dev_blk_ctx *blk,
 	return status;
 }
 
-static cl_int queue_diablo_kernel(_clState *clState, dev_blk_ctx *blk, cl_uint threads)
+static cl_int queue_diablo_kernel(struct _clState *clState, struct dev_blk_ctx *blk, cl_uint threads)
 {
 	cl_kernel *kernel = &clState->kernel;
 	unsigned int num = 0;
@@ -1063,7 +1071,7 @@ static cl_int queue_diablo_kernel(_clState *clState, dev_blk_ctx *blk, cl_uint t
 }
 
 #ifdef USE_SCRYPT
-static cl_int queue_scrypt_kernel(_clState *clState, dev_blk_ctx *blk, __maybe_unused cl_uint threads)
+static cl_int queue_scrypt_kernel(struct _clState *clState, struct dev_blk_ctx *blk, __maybe_unused cl_uint threads)
 {
 	unsigned char *midstate = blk->work->midstate;
 	cl_kernel *kernel = &clState->kernel;
@@ -1281,7 +1289,7 @@ static void get_opencl_statline_before(char *buf, size_t bufsiz, struct cgpu_inf
 		if (gt != -1)
 			tailsprintf(buf, bufsiz, "%5.1fC ", gt);
 		else
-			tailsprintf(buf, bufsiz, "       ", gt);
+			tailsprintf(buf, bufsiz, "       ");
 		if (gf != -1)
 			// show invalid as 9999
 			tailsprintf(buf, bufsiz, "%4dRPM ", gf > 9999 ? 9999 : gf);
@@ -1301,7 +1309,7 @@ static void get_opencl_statline(char *buf, size_t bufsiz, struct cgpu_info *gpu)
 }
 
 struct opencl_thread_data {
-	cl_int (*queue_kernel_parameters)(_clState *, dev_blk_ctx *, cl_uint);
+	cl_int (*queue_kernel_parameters)(struct _clState *, struct dev_blk_ctx *, cl_uint);
 	uint32_t *res;
 };
 
@@ -1373,6 +1381,11 @@ static bool opencl_thread_prepare(struct thr_info *thr)
 				cgpu->kname = "scrypt";
 				break;
 #endif
+#ifdef USE_KECCAK
+			case KL_KECCAK:
+				cgpu->kname = "keccak";
+			break;
+#endif
 			case KL_POCLBM:
 				cgpu->kname = "poclbm";
 				break;
@@ -1394,7 +1407,7 @@ static bool opencl_thread_init(struct thr_info *thr)
 	const int thr_id = thr->id;
 	struct cgpu_info *gpu = thr->cgpu;
 	struct opencl_thread_data *thrdata;
-	_clState *clState = clStates[thr_id];
+	struct _clState *clState = clStates[thr_id];
 	cl_int status = 0;
 	thrdata = calloc(1, sizeof(*thrdata));
 	thr->cgpu_data = thrdata;
@@ -1418,6 +1431,11 @@ static bool opencl_thread_init(struct thr_info *thr)
 #ifdef USE_SCRYPT
 		case KL_SCRYPT:
 			thrdata->queue_kernel_parameters = &queue_scrypt_kernel;
+			break;
+#endif
+#ifdef USE_KECCAK
+		case KL_KECCAK:
+			thrdata->queue_kernel_parameters = &queue_keccak_kernel;
 			break;
 #endif
 		default:
@@ -1456,6 +1474,11 @@ static bool opencl_prepare_work(struct thr_info __maybe_unused *thr, struct work
 		work->blk.work = work;
 	else
 #endif
+#ifdef USE_KECCAK
+	if (opt_keccak)
+		keccak_prepare_work(thr, work);
+	else
+#endif
 		precalc_hash(&work->blk, (uint32_t *)(work->midstate), (uint32_t *)(work->data + 64));
 	return true;
 }
@@ -1468,7 +1491,7 @@ static int64_t opencl_scanhash(struct thr_info *thr, struct work *work,
 	const int thr_id = thr->id;
 	struct opencl_thread_data *thrdata = thr->cgpu_data;
 	struct cgpu_info *gpu = thr->cgpu;
-	_clState *clState = clStates[thr_id];
+	struct _clState *clState = clStates[thr_id];
 	const cl_kernel *kernel = &clState->kernel;
 	const int dynamic_us = opt_dynamic_interval * 1000;
 
@@ -1558,7 +1581,7 @@ static int64_t opencl_scanhash(struct thr_info *thr, struct work *work,
 static void opencl_thread_shutdown(struct thr_info *thr)
 {
 	const int thr_id = thr->id;
-	_clState *clState = clStates[thr_id];
+	struct _clState *clState = clStates[thr_id];
 
 	clReleaseKernel(clState->kernel);
 	clReleaseProgram(clState->program);

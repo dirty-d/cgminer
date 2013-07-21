@@ -51,6 +51,7 @@
 #include "driver-opencl.h"
 #include "bench_block.h"
 #include "scrypt.h"
+#include "keccak.h"
 
 #ifdef USE_AVALON
 #include "driver-avalon.h"
@@ -104,6 +105,9 @@ int opt_g_threads = -1;
 int gpu_threads;
 #ifdef USE_SCRYPT
 bool opt_scrypt;
+#endif
+#ifdef USE_KECCAK
+bool opt_keccak;
 #endif
 #endif
 bool opt_restart = true;
@@ -1170,6 +1174,12 @@ static struct opt_table opt_config_table[] = {
 		     set_shaders, NULL, NULL,
 		     "GPU shaders per card for tuning scrypt, comma separated"),
 #endif
+#ifdef USE_KECCAK
+	OPT_WITHOUT_ARG("--keccak",
+			 opt_set_bool, &opt_keccak,
+			 "Use the keccak algorithm for mining (copperlark only)"),
+#endif
+
 	OPT_WITH_ARG("--sharelog",
 		     set_sharelog, NULL, NULL,
 		     "Append share log to file"),
@@ -1415,6 +1425,9 @@ static char *opt_verusage_and_exit(const char *extra)
 #endif
 #ifdef USE_SCRYPT
 		"scrypt "
+#endif
+#ifdef USE_KECCAK
+		"keccak "
 #endif
 		"mining support.\n"
 		, packagename);
@@ -1820,7 +1833,7 @@ static bool gbt_decode(struct pool *pool, json_t *res_val)
 
 static bool getwork_decode(json_t *res_val, struct work *work)
 {
-	if (unlikely(!jobj_binary(res_val, "data", work->data, sizeof(work->data), true))) {
+	if (unlikely(!jobj_binary(res_val, "data", work->data, opt_keccak ? 80 : sizeof(work->data), true))) {
 		applog(LOG_ERR, "JSON inval data");
 		return false;
 	}
@@ -2497,8 +2510,19 @@ static bool submit_upstream_work(struct work *work, CURL *curl, bool resubmit)
 
 	endian_flip128(work->data, work->data);
 
-	/* build hex string */
 	hexstr = bin2hex(work->data, sizeof(work->data));
+	if (opt_keccak)
+	{
+		/* build hex string */
+		hexstr = bin2hex(work->data, 80);
+	}
+	else
+	{
+		endian_flip128(work->data, work->data);
+
+		/* build hex string */
+		hexstr = bin2hex(work->data, sizeof(work->data));
+	}
 
 	/* build JSON-RPC request */
 	if (work->gbt) {
@@ -3340,6 +3364,8 @@ static void rebuild_hash(struct work *work)
 {
 	if (opt_scrypt)
 		scrypt_regenhash(work);
+	else if (opt_keccak)
+		keccak_regenhash(work);
 	else
 		regen_hash(work);
 
@@ -4014,6 +4040,9 @@ void write_config(FILE *fcfg)
 				case KL_SCRYPT:
 					fprintf(fcfg, "scrypt");
 					break;
+				case KL_KECCAK:
+					fprintf(fcfg, "keccak");
+				break;
 			}
 		}
 #ifdef USE_SCRYPT

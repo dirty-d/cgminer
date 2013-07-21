@@ -12,8 +12,11 @@
 #endif
 
 #include "miner.h"
+#ifdef USE_KECCAK
+	#include "keccak.h"
+#endif
 
-typedef struct {
+struct _clState {
 	cl_context context;
 	cl_kernel kernel;
 	cl_command_queue commandQueue;
@@ -25,6 +28,9 @@ typedef struct {
 	size_t padbufsize;
 	void * cldata;
 #endif
+#ifdef USE_KECCAK
+	cl_mem keccak_CLbuffer; /* KECCAK_BUFFER_SIZE bytes */
+#endif
 	bool hasBitAlign;
 	bool hasOpenCL11plus;
 	bool goffset;
@@ -32,10 +38,10 @@ typedef struct {
 	size_t max_work_size;
 	size_t wsize;
 	enum cl_kernels chosen_kernel;
-} _clState;
+};
 
 extern char *file_contents(const char *filename, int *length);
 extern int clDevicesNum(void);
-extern _clState *initCl(unsigned int gpu, char *name, size_t nameSize);
+extern struct _clState *initCl(unsigned int gpu, char *name, size_t nameSize);
 #endif /* HAVE_OPENCL */
 #endif /* __OCL_H__ */

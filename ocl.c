@@ -32,6 +32,9 @@
 
 #include "findnonce.h"
 #include "ocl.h"
+#ifdef USE_KECCAK
+	#include "keccak.h"
+#endif
 
 int opt_platform_id = -1;
 
@@ -205,9 +208,9 @@ void patch_opcodes(char *w, unsigned remaining)
 	applog(LOG_DEBUG, "Patched a total of %i BFI_INT instructions", patched);
 }
 
-_clState *initCl(unsigned int gpu, char *name, size_t nameSize)
+struct _clState *initCl(unsigned int gpu, char *name, size_t nameSize)
 {
-	_clState *clState = calloc(1, sizeof(_clState));
+	struct _clState *clState = calloc(1, sizeof(struct _clState));
 	bool patchbfi = false, prog_built = false;
 	struct cgpu_info *cgpu = &gpus[gpu];
 	cl_platform_id platform = NULL;
@@ -387,6 +390,9 @@ _clState *initCl(unsigned int gpu, char *name, size_t nameSize)
 		if (opt_scrypt) {
 			applog(LOG_INFO, "Selecting scrypt kernel");
 			clState->chosen_kernel = KL_SCRYPT;
+		} else if (opt_keccak) {
+			applog(LOG_INFO, "Selecting keccak kernel");
+			clState->chosen_kernel = KL_KECCAK;
 		} else if (!strstr(name, "Tahiti") &&
 			/* Detect all 2.6 SDKs not with Tahiti and use diablo kernel */
 			(strstr(vbuff, "844.4") ||  // Linux 64 bit ATI 2.6 SDK
@@ -449,6 +455,12 @@ _clState *initCl(unsigned int gpu, char *name, size_t nameSize)
 			/* Scrypt only supports vector 1 */
 			cgpu->vwidth = 1;
 			break;
+		case KL_KECCAK:
+			strcpy(filename, KECCAK_KERNNAME".cl");
+			strcpy(binaryfilename, KECCAK_KERNNAME);
+			/* Keccak only supports vector 1 */
+			cgpu->vwidth = 1;
+			break;
 		case KL_NONE: /* Shouldn't happen */
 		case KL_DIABLO:
 			strcpy(filename, DIABLO_KERNNAME".cl");
@@ -464,7 +476,7 @@ _clState *initCl(unsigned int gpu, char *name, size_t nameSize)
 	}
 
 	if (((clState->chosen_kernel == KL_POCLBM || clState->chosen_kernel == KL_DIABLO || clState->chosen_kernel == KL_DIAKGCN) &&
-		clState->vwidth == 1 && clState->hasOpenCL11plus) || opt_scrypt)
+		clState->vwidth == 1 && clState->hasOpenCL11plus) || opt_scrypt || opt_keccak)
 			clState->goffset = true;
 
 	if (cgpu->work_size && cgpu->work_size <= clState->max_work_size)
@@ -614,7 +626,7 @@ build:
 	if (clState->vwidth > 1)
 		applog(LOG_DEBUG, "Patched source to suit %d vectors", clState->vwidth);
 
-	if (clState->hasBitAlign) {
+	if (clState->hasBitAlign && !opt_keccak) {
 		strcat(CompilerOptions, " -D BITALIGN");
 		applog(LOG_DEBUG, "cl_amd_media_ops found, setting BITALIGN");
 		if (strstr(name, "Cedar") ||
@@ -827,6 +839,17 @@ built:
 			return NULL;
 		}
 		clState->outputBuffer = clCreateBuffer(clState->context, CL_MEM_WRITE_ONLY, SCRYPT_BUFFERSIZE, NULL, &status);
+	} else
+#endif
+#ifdef USE_KECCAK
+	if (opt_keccak) {
+		clState->keccak_CLbuffer = clCreateBuffer(clState->context, CL_MEM_READ_ONLY, KECCAK_BUFFER_SIZE, NULL, &status);
+		if (status != CL_SUCCESS) {
+			applog(LOG_ERR, "Error %d: clCreateBuffer (keccak_CLbuffer)", status);
+			return NULL;
+		}
+
+		clState->outputBuffer = clCreateBuffer(clState->context, CL_MEM_WRITE_ONLY, BUFFERSIZE, NULL, &status);
 	} else
 #endif
 	clState->outputBuffer = clCreateBuffer(clState->context, CL_MEM_WRITE_ONLY, BUFFERSIZE, NULL, &status);

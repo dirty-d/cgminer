@@ -129,6 +129,10 @@ static inline int fsync (int fd)
   #include "usbutils.h"
 #endif
 
+#ifdef USE_KECCAK
+  #include "keccak.h"
+#endif
+
 #if (!defined(WIN32) && ((__GNUC__ > 4) || (__GNUC__ == 4 && __GNUC_MINOR__ >= 3))) \
     || (defined(WIN32) && ((__GNUC__ > 4) || (__GNUC__ == 4 && __GNUC_MINOR__ >= 7)))
 #ifndef bswap_16
@@ -365,6 +369,7 @@ enum cl_kernels {
 	KL_DIAKGCN,
 	KL_DIABLO,
 	KL_SCRYPT,
+	KL_KECCAK,
 };
 
 enum dev_reason {
@@ -972,6 +977,11 @@ extern bool opt_scrypt;
 #else
 #define opt_scrypt (0)
 #endif
+#ifdef USE_KECCAK
+extern bool opt_keccak;
+#else
+#define opt_keccak (0)
+#endif
 extern double total_secs;
 extern int mining_threads;
 extern int total_devices;
@@ -999,7 +1009,7 @@ extern uint64_t best_diff;
 extern struct timeval block_timeval;
 
 #ifdef HAVE_OPENCL
-typedef struct {
+struct dev_blk_ctx {
 	cl_uint ctx_a; cl_uint ctx_b; cl_uint ctx_c; cl_uint ctx_d;
 	cl_uint ctx_e; cl_uint ctx_f; cl_uint ctx_g; cl_uint ctx_h;
 	cl_uint cty_a; cl_uint cty_b; cl_uint cty_c; cl_uint cty_d;
@@ -1025,9 +1035,12 @@ typedef struct {
 #ifdef USE_SCRYPT
 	struct work *work;
 #endif
-} dev_blk_ctx;
+#ifdef USE_KECCAK
+	unsigned char keccak_data[KECCAK_BUFFER_SIZE];
+#endif
+};
 #else
-typedef struct {
+struct {
 	uint32_t nonce;
 } dev_blk_ctx;
 #endif
@@ -1197,7 +1210,7 @@ struct work {
 
 	int		rolls;
 
-	dev_blk_ctx	blk;
+	struct dev_blk_ctx	blk;
 
 	struct thr_info	*thr;
 	int		thr_id;
